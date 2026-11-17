@@ -1,23 +1,20 @@
-# Security notes
+# Security Policy and Threat Model
 
-## Threat model
+## Threat Model
 
-`github.com/Trysac/u918-oidc-provider-lite` is a pure library without I/O. The main risks are:
+### Defended
 
-- **Supply chain**: a compromised dependency or CI action. Mitigation: standard library only,
-  `go.sum` verification, `govulncheck` in the local gates, Dependabot weekly updates, actions
-  pinned by commit SHA, minimal workflow permissions.
-- **Leaked secrets**: tokens committed by mistake. Mitigation: `gitleaks` runs in the local gates
-  and in CI; `.env` files are git-ignored.
-- **Insecure code**: disabled TLS verification, weak crypto, command injection. Mitigation: a
-  `security` gate (gosec, high severity fails, `#nosec` ignored); fix the code instead of silencing
-  it.
-- **Untrusted input**: callers may pass hostile strings. Mitigation: validate input and return
-  explicit errors; never use `unsafe` or `os/exec` with untrusted data.
+1. **Authorization Code Interception**: Mandatory `S256` PKCE (RFC 7636). Requests omitting PKCE or using `plain` are rejected.
+2. **Open Redirector Attacks**: `client_id` and `redirect_uri` are validated via exact string match on `/authorize`. If validation fails, the provider returns `400 Bad Request` and does not set a `Location` header.
+3. **Authorization Code Replay**: Codes are single-use. Replay returns `invalid_grant` and triggers revocation of all tokens derived from the same family.
+4. **Refresh Token Theft**: Each refresh grant rotates the token. Reuse of a refresh token revokes the entire token family.
+5. **IdP Mix-Up**: All authorization responses include the `iss` parameter (RFC 9207).
+6. **Token Leakage**: Secrets, codes, and tokens are stored in memory only as SHA-256 hashes.
+7. **Side Channels**: Client secret and PKCE comparisons utilize `crypto/subtle.ConstantTimeCompare`.
 
-## Publishing
+### Not Defended
 
-Releases are git tags served through the Go module proxy and checksum database. No registry token
-is stored in the repository.
-
-To report a vulnerability, see [SECURITY.md](../SECURITY.md).
+1. **Host Session Security**: The library does not manage the login or consent sessions; CSRF protection and session binding on the host's `Authenticator` and `Consent` implementations are the host's responsibility.
+2. **TLS Termination**: The provider assumes secure transport; TLS termination must be handled by the host application.
+3. **Key Persistence**: RSA keys are stored in process memory. HSM/KMS-backed storage must be implemented by the host.
+4. **Dynamic Registration**: Clients are strictly configured at initialization; dynamic registration is not supported.
