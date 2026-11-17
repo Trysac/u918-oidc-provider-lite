@@ -1,30 +1,15 @@
 # Architecture
 
-## Purpose
+`oidcproviderlite` is structured as a single, zero-external-dependency Go package implementing `http.Handler`.
 
-`github.com/Trysac/u918-oidc-provider-lite` is a small, dependency-free Go library: Embeddable OpenID Connect provider for the authorization code flow with mandatory PKCE, rotating refresh tokens, JWKS key rotation and discovery
+## Components
 
-## Shape
+- **`Provider` (`oidcproviderlite.go`)**: Routes requests for `/.well-known/openid-configuration`, `/jwks.json`, `/authorize`, `/token`, and `/userinfo`. Maintains bounded in-memory maps of hashed authorization codes, access tokens, and refresh tokens protected by a mutex.
+- **`KeySet` (`keys.go`)**: Validates 2048–4096 bit RSA private keys, signs ID tokens using RS256 (`crypto/rsa` + `crypto/sha256`), and supports zero-downtime key rotation (`Rotate`), publishing the active and immediately preceding public keys on `/jwks.json`.
+- **`Error` (`errors.go`)**: Unified machine-readable error type used for both Go API errors and RFC 6749 JSON error responses.
 
-```text
-caller code --> package oidcproviderlite (repository root)
-                    |
-                    +-- pure functions, no I/O, no global mutable state
-                    +-- internal/ (optional private helpers)
-```
+## Key Design Decisions
 
-- **Public API**: every exported identifier of the root package. Unexported identifiers and
-  `internal/` packages may change without a major version.
-- **Errors**: invalid input returns an error; exported sentinel errors (such as `ErrBlank`) let
-  callers branch with `errors.Is`. The library never panics on input, prints or exits.
-- **Side effects**: none. If a feature needs I/O, accept an interface (`io.Reader` or a small
-  custom one) instead of opening resources, and record the choice in an ADR.
-
-## Quality contract
-
-`scripts/check` is the single definition of the gates; `fabrica.json` tells the factory and CI
-how to run it. See [TESTING.md](TESTING.md).
-
-## Decisions
-
-Architecture decisions are recorded in [decisions/](decisions/) as numbered ADRs.
+1. **Hashed State Only**: Raw authorization codes, access tokens, and refresh tokens (32 random bytes, base64url-encoded) are returned to the client once and stored only as `[32]byte` SHA-256 digests.
+2. **Token Family Tracking**: Every authorization code creates a random `familyID` inherited by all access and refresh tokens derived from it. Replaying a used authorization code or a rotated refresh token immediately deletes all tokens sharing that `familyID`.
+3. **Bounded Memory**: Pending codes and active tokens are capped by `MaxCodes` (default 10,000) and `MaxTokens` (default 100,000). When a cap is reached, expired/used records are purged first; if still full, the provider returns `temporarily_unavailable`.
